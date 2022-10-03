@@ -1,0 +1,62 @@
+Bootstrap: docker
+From: ubuntu:20.04
+
+%post
+    export DEBIAN_FRONTEND=noninteractive
+
+    # Install common packages
+    apt-get update
+    apt -y install git rclone wget vim htop make gfortran cmake build-essential sudo lsb-release locales
+    apt -y install netcdf-bin libnetcdff-dev libgeos-dev
+    
+    locale-gen en_US en_US.UTF-8
+    dpkg-reconfigure locales
+
+    export LC_ALL=C.UTF-8
+
+    # Universe is needed for python packages:
+    apt -y install software-properties-common
+    add-apt-repository universe
+
+    # Install postgresql and postgis
+    sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+    wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add -
+    apt-get update
+    apt-get -y install postgresql-14 postgresql-contrib postgresql-common
+    apt-get -y install postgis postgresql-14-postgis-3
+
+    apt-get -y upgrade
+
+    # Install osmium: Presrequisites for DEBIAN/Ubuntu. For other distributions https://github.com/osmcode/osmium-tool 
+    apt-get -y install libboost-program-options-dev libbz2-dev zlib1g-dev liblz4-dev libexpat1-dev pandoc
+
+    mkdir work
+    cd work
+    git clone https://github.com/mapbox/protozero
+    git clone https://github.com/osmcode/libosmium
+    git clone https://github.com/osmcode/osmium-tool
+
+    cd osmium-tool
+    mkdir build
+    cd build
+    cmake ..
+    make
+    make install
+
+    # Install osm2pgsql
+    cd
+    apt-get install -y g++ libboost-dev libboost-system-dev libboost-filesystem-dev libpq-dev libproj-dev lua5.3 liblua5.3-dev
+
+    git clone https://github.com/openstreetmap/osm2pgsql.git
+    cd osm2pgsql
+    mkdir build && cd build
+    cmake ..
+    make
+    make man
+    make install
+
+    # Install python packages
+    apt install -y python3.8 python3-pip python3-ipython ipython3 python3-numpy python3-tqdm python3-h5py python3-netcdf4 python3-pandas python3-xarray python3-geopandas python3-shapely python3-cartopy python3-osmnx python3-sqlalchemy
+
+%environment
+    export machine=singularity
