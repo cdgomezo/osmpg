@@ -8,4 +8,4 @@ This version needs sudo priviledges. Working on removing them.
 3. Open a shell terminal of the container: `sudo singularity shell --writable osmpg.sif`
 4. Execute the scripts
 
-If you want to make the whole installation yourself, follow the recipe osmpg_nosin.def. This works as well as a recipe for building a custom container not dependent on the docker image of PostgreSQL/PostGIS. To build this container you can do: `sudo singularity build osmpg_nosin.sif osmpg_nosin.def` os `sudo singularity build --sandbox osmpg_nosin.sif osmpg_nosin.def` if you want to have access to the installation folders and add commands, packages, etc.
+If you want to make the whole installation yourself (without singularity), follow the recipe osmpg_nosin.def. This works as well as a recipe for building a custom container not dependent on the docker image of PostgreSQL/PostGIS. To build this container you can do: `sudo singularity build osmpg_nosin.sif osmpg_nosin.def` os `sudo singularity build --sandbox osmpg_nosin.sif osmpg_nosin.def` if you want to have access to the installation folders and add commands, packages, etc.
