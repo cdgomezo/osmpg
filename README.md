@@ -22,3 +22,8 @@ CREATE EXTENSION hstore;
 6. `osmium tags-filter -v -o germany-hwy.osm.pbf germany-latest.osm.pbf w/highway `
 7. `osm2pgsql -d osmpg -P 5433 -O flex -S highways.lua germany-hwy.osm.pbf` (If psql is not running on port 5432 replace here)
 8. Run python script.
+
+## Documentation
+
+osmium: https://osmcode.org/libosmium/
+osm2pgsql: https://osm2pgsql.org/
