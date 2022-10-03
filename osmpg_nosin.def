@@ -1,0 +1,83 @@
+Bootstrap: docker
+From: ubuntu:20.04
+
+%post
+    # Install common packages
+    apt-get update
+    apt -y install git rclone wget vim htop make gfortran cmake build-essential sudo lsb-release locales
+    apt -y install netcdf-bin libnetcdff-dev libgeos-dev
+
+    locale-gen en_US en_US.UTF-8
+    dpkg-reconfigure locales
+
+    export LC_ALL=C.UTF-8
+
+    # Universe is needed for python packages:
+    apt -y install software-properties-common
+    add-apt-repository universe
+
+    # Install postgresql and postgis
+    sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+    wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add -
+    apt-get update
+    apt-get -y install postgresql-14 postgresql-contrib postgresql-common
+    apt-get -y install postgis postgresql-14-postgis-3
+
+    apt-get -y upgrade
+
+    # Install osmium: Presrequisites for DEBIAN/Ubuntu. For other distributions https://github.com/osmcode/osmium-tool 
+    apt-get -y install libboost-program-options-dev libbz2-dev zlib1g-dev liblz4-dev libexpat1-dev pandoc
+
+    mkdir work
+    cd work
+    git clone https://github.com/mapbox/protozero
+    git clone https://github.com/osmcode/libosmium
+    git clone https://github.com/osmcode/osmium-tool
+
+    cd osmium-tool
+    mkdir build
+    cd build
+    cmake ..
+    make
+    make install
+
+    # Install osm2pgsql
+    cd
+    apt-get -y install osm2pgsql
+
+    # Install conda (Installation of the python packages can be done with pip as well)
+    cd /opt
+    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
+    chmod +x miniconda.sh
+    ./miniconda.sh -b -p /opt/conda
+    rm miniconda.sh
+
+    # Create a conda environment and make sure it is automatically activated
+    . /opt/conda/etc/profile.d/conda.sh
+    conda create -y -n osmpg
+    conda activate osmpg
+
+    conda update -y -n osmpg --all
+
+    # General python packages
+
+    conda install -y -c conda-forge ipython
+    conda install -y -c conda-forge pytables
+    conda install -y -c conda-forge numpy
+    conda install -y -c conda-forge matplotlib
+    conda install -y -c conda-forge pandas
+    conda install -y -c conda-forge xarray
+
+    # Geographical packages
+
+    conda install -y -c conda-forge h5py
+    conda install -y -c conda-forge netcdf4
+    conda install -y -c conda-forge geopandas
+    conda install -y -c conda-forge shapely
+    conda install -y -c conda-forge cartopy
+    conda install -y -c conda-forge osmnx
+    conda install -y -c conda-forge sqlalchemy
+
+    export LC_ALL=C
+    echo ". /opt/conda/etc/profile.d/conda.sh" >> $SINGULARITY_ENVIRONMENT
+    echo "conda activate osm" >> $SINGULARITY_ENVIRONMENT
