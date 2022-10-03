@@ -10,8 +10,11 @@ This version needs sudo priviledges. Working on removing them.
 ```
 su - postgres
 service postgresql start
+psql
 CREATE DATABASE osmpg;
 \c osmpg
 CREATE EXTENSION postgis;
+CREATE EXTENSION hstore;
+\q
 ```
-
+5. 
