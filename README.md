@@ -3,3 +3,4 @@ Singularity container to extract data from OpenStreetMaps using ´osmium´, ´os
 
 # How to use
 This version needs sudo priviledges. Working on removing them.
+1. Install singularity
