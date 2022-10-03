@@ -6,15 +6,19 @@ This version needs sudo priviledges. Working on removing them.
 1. Install singularity: https://docs.sylabs.io/guides/3.0/user-guide/installation.html
 2. Build the container with: `sudo singularity build --sandbox osmpg osmpg_nosin.def`. Alternatively, you can install yourself (without singularity) all the required packages following the recipe in osmpg_nosin.def.
 3. Open a shell terminal of the container: `sudo singularity shell --writable osmpg`
-4. Initiate the database:
+4. Initiate the database: (When creating password choose 'postgres' for simplicity)
 ```
 su - postgres
 service postgresql start
 psql
+\password postgres
 CREATE DATABASE osmpg;
 \c osmpg
 CREATE EXTENSION postgis;
 CREATE EXTENSION hstore;
 \q
 ```
-5. 
+5. Check the port where psql is running: `service postgresql status` (Usually 5432 but could be different)
+6. `osmium tags-filter -v -o germany-hwy.osm.pbf germany-latest.osm.pbf w/highway `
+7. `osm2pgsql -d osmpg -P 5433 -O flex -S highways.lua germany-hwy.osm.pbf` (If psql is not running on port 5432 replace here)
+8. Run python script.
