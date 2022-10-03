@@ -4,7 +4,7 @@ Singularity container and recipe to extract data from OpenStreetMaps using osmiu
 ## How to use
 This version needs sudo priviledges. Working on removing them.
 1. Install singularity: https://docs.sylabs.io/guides/3.0/user-guide/installation.html
-2. Download the container osmpg.sif
+2. Download the container osmpg.sif or build it with: `sudo singularity build osmpg.sif osmpg.def`
 3. Open a shell terminal of the container: `sudo singularity shell --writable osmpg.sif`
 4. Execute the scripts
 
