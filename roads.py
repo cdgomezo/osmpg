@@ -1,7 +1,7 @@
 from sqlalchemy import create_engine
 from pandas import merge
 from geopandas import read_postgis, GeoDataFrame
-from numpy import arange, array
+from numpy import arange, array, unique
 from shapely import geometry
 from xarray import Dataset
 
@@ -23,8 +23,8 @@ def drawGrid(geom_bounds, square_size, proj=None):
     x, y = (minX, minY)
     geom_array = []
 
-    while y <= maxY:
-        while x <= maxX:
+    while y <= maxY-square_size:
+        while x <= maxX-square_size:
             geom = geometry.Polygon([(x,y), (x, y+square_size), (x+square_size, y+square_size), (x+square_size, y), (x, y)])
             geom_array.append(geom)
             x += square_size
@@ -37,7 +37,7 @@ def drawGrid(geom_bounds, square_size, proj=None):
     if proj is not None:
         grid = grid.to_crs(proj)
 
-    return grid, [minX, minY, maxX, maxY]
+    return grid
 
 # Connect to the database
 engine = create_engine('postgresql://postgres:postgres@localhost:5433/osmpg') # Change this to your database connection
@@ -62,13 +62,15 @@ gdf_grid = gdf_grid.groupby('cell_idx').sum().reset_index()
 # Merge the grid with the length of the roads
 grid = merge(grid, gdf_grid, on='cell_idx', how='left')
 
-# Creating netCDF file
-minX, minY, maxX, maxY = total_bounds
-lon = arange(minX+0.1/2, maxX+0.1, 0.1)
-lat = arange(minY+0.1/2, maxY, 0.1)
+# Create an array with the centroids of the grid cells
+centroids = array([cell.centroid.coords[0] for cell in grid.geometry])
+
+# Extract longitude and latitude from the centroids
+lon = unique(centroids[:,0])
+lat = unique(centroids[:,1])
 
 # Create matrix with the length of the roads in each grid cell
-road_length = array(grid['length'].values).reshape(len(lat), len(lon))
+road_length = array([array((round(cell.centroid.x,2),round(cell.centroid.y,2))) for cell in grid.geometry])
 
 # Save the netCDF file
 ds = Dataset({'road_length': (['lat', 'lon'], road_length[:,:])}, coords={'lat': lat, 'lon': lon})
@@ -78,5 +80,6 @@ ds.attrs['units'] = 'm'
 ds.attrs['projection'] = 'EPSG:4326'
 ds.attrs['year'] = 2019
 ds.to_netcdf('road_length.nc')
+
 
 
