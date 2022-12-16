@@ -1,11 +1,16 @@
-import os
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
+import os
+import sys
+import datetime as dtm
 from sqlalchemy import create_engine
-from pandas import merge
-from geopandas import read_postgis, GeoDataFrame
-from numpy import arange, array, unique, sqrt
+import pandas as pd
+import geopandas as gpd
+import numpy as np
 from shapely import geometry
-from xarray import Dataset
+import xarray as xr
+import netCDF4 as nc4
 from loguru import logger
 
 import cartopy
@@ -27,6 +32,27 @@ def runOsmium(input_pbf, output='output_osmium'):
 
     return osmium
 
+def createDatabase(user, password, host, port, database):
+    '''
+    Creates a database with postgis extension
+    '''
+    # Creating the database
+    engine = create_engine(f'postgresql://{user}:{password}@{host}:{port}/postgres')
+    connection = engine.connect()
+    connection.execution_options(isolation_level="AUTOCOMMIT").execute(f'CREATE DATABASE {database};')
+    connection.close()
+
+    # Creating the postgis extension
+    engine = create_engine(f'postgresql://{user}:{password}@{host}:{port}/{database}')
+    connection = engine.connect()
+    connection.execution_options(isolation_level="AUTOCOMMIT").execute(f'CREATE EXTENSION postgis;')
+    connection.execution_options(isolation_level="AUTOCOMMIT").execute(f'CREATE EXTENSION hstore;')
+    connection.close()
+
+    logger.info('Database created')
+
+    return engine
+
 def runOsm2pgsql(database, lua_file='highways.lua', input='output_osmium'):
     '''
     Runs Osm2pgsql to extract the data from OSM
@@ -37,7 +63,16 @@ def runOsm2pgsql(database, lua_file='highways.lua', input='output_osmium'):
 
     return osm2pgsql
 
-# Function to create grid
+def createEngine(user, password, host, port, database):
+    '''
+    Creates a connection to a database
+    '''
+    engine = create_engine(f'postgresql://{user}:{password}@{host}:{port}/{database}')
+
+    logger.info('Connection to database created')
+
+    return engine
+
 def drawGrid(geom, square_size, proj=None):
     '''
     Creates a grid with squared grid cells around a defined geometry in geografical coordinates or projected if specified.
@@ -49,12 +84,12 @@ def drawGrid(geom, square_size, proj=None):
     minX = round(minX, 1)
     minY = round(minY, 1)
 
-    if maxX - round(maxX, 1) == 0:
+    if maxX - round(maxX, 1) <= square_size:
         maxX = round(maxX, 1)
     else:
         maxX = round(maxX, 1) + square_size
-    
-    if maxY - round(maxY, 1) == 0:
+
+    if maxY - round(maxY, 1) <= square_size:
         maxY = round(maxY, 1)
     else:
         maxY = round(maxY, 1) + square_size
@@ -63,14 +98,14 @@ def drawGrid(geom, square_size, proj=None):
     geom_array = []
 
     while y <= maxY-square_size:
-        while x <= maxX:
+        while x <= maxX-square_size:
             geom = geometry.Polygon([(x,y), (x, y+square_size), (x+square_size, y+square_size), (x+square_size, y), (x, y)])
             geom_array.append(geom)
             x += square_size
         x = minX
         y += square_size
 
-    grid = GeoDataFrame(geom_array, columns=['geometry'])
+    grid = gpd.GeoDataFrame(geom_array, columns=['geometry'])
     grid = grid.set_crs('EPSG:4326')
 
     if proj is not None:
@@ -80,26 +115,14 @@ def drawGrid(geom, square_size, proj=None):
 
     return grid
 
-# Function to create grid
-def createEngine(user, password, host, port, database):
-    '''
-    Creates a connection to a database
-    '''
-    engine = create_engine(f'postgresql://{user}:{password}@{host}:{port}/{database}')
-
-    logger.info('Connection to database created')
-
-    return engine
-
-# Function to read the data
 def readData(engine, weights=False, proj=None):
     '''
     Reads data from a database table and returns a geopandas dataframe
     '''
-    data = read_postgis("SELECT * FROM highways WHERE type = 'motorway' OR type = 'trunk' OR type = 'primary' OR type = 'secondary' OR type = 'tertiary' OR type = 'motorway_link' OR type = 'trunk_link' OR type = 'primary_link' OR type = 'secondary_link' OR type = 'tertiary_link'", engine, geom_col='geom')
+    data = gpd.read_postgis("SELECT * FROM highways WHERE type = 'motorway' OR type = 'trunk' OR type = 'primary' OR type = 'secondary' OR type = 'tertiary' OR type = 'motorway_link' OR type = 'trunk_link' OR type = 'primary_link' OR type = 'secondary_link' OR type = 'tertiary_link'", engine, geom_col='geom')
 
     if weights:
-        boundaries = read_postgis("SELECT * FROM boundaries", engine, geom_col='geom') # Read administrative boundaries
+        boundaries = gpd.read_postgis("SELECT * FROM boundaries", engine, geom_col='geom') # Read administrative boundaries
         data = data.sjoin(boundaries, how='left') # Spatial join with administrative boundaries
         data = data.drop(columns=['index_right']) # Drop index column
         data.lanes = data.lanes.fillna(data.groupby(['name', 'type']).lanes.transform('median')) # Fill NaN values with median of the same road type and administrative boundary
@@ -113,12 +136,11 @@ def readData(engine, weights=False, proj=None):
 
     return data
 
-# Function to calculate lengths
 def calculateLengths(data, grid, proj=None, weights=False):
     '''
     Calculates the length of the roads in each grid cell
     '''
-    grid.loc[:,'cell_idx'] = arange(0,grid.shape[0]) # Preparing grid to spatial join with highways
+    grid.loc[:,'cell_idx'] = np.arange(0,grid.shape[0]) # Preparing grid to spatial join with highways
 
     if grid.crs.is_geographic:
         if proj is not None:
@@ -153,7 +175,7 @@ def calculateLengths(data, grid, proj=None, weights=False):
     # Merge the grid with the length of the roads
     data_grid = data.groupby('cell_idx').sum().reset_index()
 
-    total = merge(grid, data_grid, on='cell_idx', how='left')
+    total = pd.merge(grid, data_grid, on='cell_idx', how='left')
 
     grids['total'] = total
     grids['total'].loc[:,'lengths'] = grids['total'].lengths.fillna(0)
@@ -168,31 +190,32 @@ def tableToXarray(grid, filename=None):
     '''
     
     # Create an array with the centroids of the grid cells
-    centroids = array([array((round(cell.centroid.x,2),round(cell.centroid.y,2))) for cell in grid['total'].geometry])
+    centroids = np.array([np.array((round(cell.centroid.x,2),round(cell.centroid.y,2))) for cell in grid['total'].geometry])
 
     # Extract longitude and latitude from the centroids
-    lon = unique(centroids[:,0])
-    lat = unique(centroids[:,1])
+    lon = np.unique(centroids[:,0])
+    lat = np.unique(centroids[:,1])
 
     # Create a dictionary with the length of the roads in each grid cell
     lengths = {}
+    encoding_dct = {}
     for rtype in grid.keys():
         lengths[rtype] = {"dims": ['lat', 'lon'], 'data': grid[rtype].lengths.values.reshape(len(lat), len(lon)), 'attrs': {'units': 'm'}}
-    
+        encoding_dct[rtype] = {"zlib": True, "complevel": 6}
     # Create xarray dataset
-    ds = Dataset.from_dict(lengths)
+    ds = xr.Dataset.from_dict(lengths)
     ds = ds.assign_coords(lon=lon, lat=lat)
     ds.attrs['title'] = 'Road length'
-    # ds.attrs['description'] = 'Road length in Germany'
     ds.attrs['units'] = 'm'
     ds.attrs['projection'] = 'EPSG:4326'
-    # ds.attrs['year'] = 2019
-
+    ds.attrs['history']    = ' '.join(sys.argv)
+    ds.attrs['date_created'] = dtm.datetime.utcnow().isoformat()
     logger.info('Xarray dataset created')
 
     if filename is not None:
-        ds.to_netcdf(filename)
-        logger.info(f'Xarray dataset stored in {filename}')
+        ds.to_netcdf(filename,
+                     engine="netcdf4", encoding=encoding_dct)
+        logger.info(f'Xarray dataset stored to {filename}')
 
     return ds
 
@@ -211,7 +234,7 @@ def plotLengths(ds):
     extent = [lon_min, lon_max, lat_min, lat_max]
 
     rtypes = list(ds.data_vars)
-    p_array = sqrt(len(rtypes))
+    p_array = np.sqrt(len(rtypes))
 
     if p_array - int(p_array) > 0:
         x = int(p_array) + 1
@@ -249,17 +272,18 @@ if __name__ == '__main__':
 
     parser = ArgumentParser(description='Create a grid with the length of the roads in each grid cell')
     parser.add_argument('args', nargs=REMAINDER, help='Arguments to pass to the script')
-    parser.add_argument('-u', '--user', dest='user', help='Database user', default='postgres')
+    parser.add_argument('-u', '--user', dest='user', help='Database user (default: %(default)s).', default='postgres')
     parser.add_argument('-p', '--password', dest='password', help='Database password', default='postgres')
-    parser.add_argument('-d', '--database', dest='database', help='Database name', default='postgres')
+    parser.add_argument('-d', '--database', dest='database', help='Database name (default: %(default)s)', default='osmpg_germany')
     parser.add_argument('-s', '--host', dest='host', help='Database host', default='localhost')
-    parser.add_argument('-t', '--port', dest='port', help='Database port', default='5432')
+    parser.add_argument('-t', '--port', dest='port', help='Database port (default: %(default)s)', default='5432')
+    parser.add_argument('-db', '--create-db', dest='create_db', help='Create database', default=False)
     parser.add_argument('-o', '--output', dest='output', help='Output file', default='road_length.nc')
-    parser.add_argument('-g', '--grid', dest='grid', help='Grid size in degrees', default=0.1)
+    parser.add_argument('-g', '--grid', dest='grid', help='Grid size in degrees (default: %(default)s)', default=0.1)
     parser.add_argument('-c', '--crs', dest='crs', help='Projection of the grid', default='EPSG:3857')
     parser.add_argument('-i', '--pbf', dest='pbf', help='Input *.osm.pbf file')#, required=True)
     parser.add_argument('-a', '--lua', dest='lua', help='*.lua file')#, required=True)
-    parser.add_argument('-w', '--weights', dest='weights', help='Weight the road lengths by number of lanes', default=False)
+    parser.add_argument('-w', '--weights', dest='weights', help='Weight the road lengths by number of lanes', action='store_true')
     parser.add_argument('-l', '--log', dest='log', help='Log file', default='log.txt')
     parser.add_argument('-v', '--verbose', dest='verbose', help='Verbose', action='store_true')
     parser.add_argument('-q', '--quiet', dest='quiet', help='Quiet', action='store_true')
@@ -274,30 +298,58 @@ if __name__ == '__main__':
     logger.add(sys.stderr, level=args.verbose)
 
     # Run osmium
-    runOsmium(args.pbf)
+    if args.pbf:
+        logger.info("extracting infomartion from -->{}<--...".format(args.pbf))
+        runOsmium(args.pbf)
+        logger.info("...information extracted from -->{}<--.".format(args.pbf))
+    else:
+        logger.info("no *.osm.pbf file given, skipping osmium")
+
+    # Create database
+    if args.create_db:
+        logger.info("creating database -->{}<--...".format(args.database))
+        createDatabase(args.user, args.password, args.host, args.port, args.database)
+        logger.info("...database -->{}<-- created.".format(args.database))
+    else:
+        logger.info("no database creation requested, skipping database creation")
 
     # Run osm2pgsql
-    runOsm2pgsql(args.database, args.lua)
+    if args.lua:
+        logger.info("loading information to database -->{}<--...".format(args.database))
+        runOsm2pgsql(args.database, args.lua)
+        logger.info("...information loaded to -->{}<--.".format(args.database))
+    else:
+        logger.info("no *.lua file given, skipping osm2pgsql")
 
     # Create connection to database
+    logger.info("connecting to database -->{}<--...".format(args.database))
     engine = createEngine(args.user, args.password, args.host, args.port, args.database)
-
+    logger.info("...database -->{}<-- connected.".format(args.database))
+    
     # Read data from database
+    assert args.weights==False, \
+        "osm2pgsql databases were not yet created with support for administrative boundaries!"
+    logger.info("reading database table...")
     data = readData(engine, args.weights)
+    logger.info("...data read")
 
     # Create grid
+    logger.info("start grid preparation...")
     grid = drawGrid(data, float(args.grid))
+    logger.info("...grid prepared.")
 
     # Calculate lengths
+    logger.info("start road length computation...")
     grid = calculateLengths(data, grid, args.crs, args.weights)
+    logger.info("...road length done.")
 
     # Create xarray dataset
+    logger.info("start output generation...")
     ds = tableToXarray(grid, args.output)
+    logger.info("...generated file ***{}***".format(args.output))
 
     # Save map
     if args.map:
+        logger.info("start map generation...")
         plotLengths(ds)
-
-
-
-
+        logger.info("...map generated.")
